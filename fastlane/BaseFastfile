@@ -1,6 +1,6 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/. 
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 fastlane_version "1.39.0"
 
@@ -8,10 +8,82 @@ default_platform :ios
 
 
 platform :ios do
-  before_all do 
+  before_all do
     # make builds & prov profile dirs
     sh("./scripts/mkdirs.sh")
     ensure_git_status_clean()
+  end
+
+  desc "Builds a TestFlight build. Takes the following arguments: \"
+  :channel          the release channel for this build. Options include nightly, beta, production \
+  :version          the version number for this build. Defaults to current version number \n \
+  :username         the Apple ID to use to log into the developer portal \n \
+  :adjustenv        the Adjust environment to use \n \
+  :adjustkey        the Adjust API key for the given environment \n"
+
+  lane :testflight do |options|
+    # Setup channel-specific settings
+    if options[:channel] == "nightly"
+      options[:config] = "FirefoxNightly"
+      options[:scheme] = "FirefoxNightly"
+      options[:app_identifier] = "org.mozilla.ios.FirefoxNightly"
+    elsif options[:channel] == "beta"
+      options[:config] = "FirefoxBeta"
+      options[:scheme] = "FirefoxBeta"
+      options[:app_identifier] = "org.mozilla.ios.FirefoxBeta"
+    elsif options[:channel] == "production"
+      options[:config] = "Firefox"
+      options[:scheme] = "Firefox"
+      options[:app_identifier] = "org.mozilla.ios.Firefox"
+    end
+
+    # Step 1: Update the version and configuration information
+    latest_build_number = latest_testflight_build_number(
+      version: options[:version],
+      app_identifier: options[:app_identifier],
+      username: options[:username],
+      initial_build_number: 1
+    )
+
+    new_build_number = latest_build_number + 1
+    increment_build_number(
+      build_number: new_build_number,
+      xcodeproj: 'Client.xcodeproj'
+    )
+    options[:build_name] = "#{options[:scheme]}-v#{options[:version]}b#{new_build_number}"
+
+    configure_adjust(
+        config: options[:config],
+        environment: options[:adjustenv],
+        app_token: options[:adjustkey]
+    )
+
+    # Step 2: Throw on some badges
+    badge(
+      shield: "Version%20#{options[:version]}-Build%20#{new_build_number}-orange",
+      no_badge: true,
+      shield_no_resize: true
+    )
+
+    # Step 3: Check out dependences and locales
+    carthage(
+      platform: "iOS",
+      use_binaries: false
+    )
+    sh("../scripts/localise.sh")
+
+    # Step 4: Build!
+    gym(
+      scheme: options[:scheme],
+      output_directory: "./builds/",
+      output_name: "#{options[:build_name]}.ipa",
+      sdk: "iphoneos",
+      clean: true,
+      export_method: "app-store",
+      include_symbols: true,
+      include_bitcode: true,
+      use_legacy_build_api: true
+    )
   end
 
   private_lane :setup do |options|
@@ -69,7 +141,7 @@ platform :ios do
       increment_version_number(
         version_number: ENV["APP_VERSION"],
         xcodeproj: 'Client.xcodeproj',
-      ) 
+      )
       version_bumped = true
     end
 
@@ -87,9 +159,9 @@ platform :ios do
 
     if version_bumped == true
       commit_version_bump(
-        message: 'Version Bump', 
-        xcodeproj: 'Client.xcodeproj', 
-      ) 
+        message: 'Version Bump',
+        xcodeproj: 'Client.xcodeproj',
+      )
     end
   end
 
@@ -288,7 +360,7 @@ platform :ios do
   :output_directory - the directory to output the snapshots to"
   lane :snapshotL10n do |options|
     if options[:devices]
-      devices = options[:devices].split(",") 
+      devices = options[:devices].split(",")
     else
       devices = ["iPhone 4s", "iPhone 5s", "iPhone 6s", "iPhone 6s Plus", "iPad 2", "iPad Pro"]
     end
@@ -332,7 +404,7 @@ platform :ios do
       output_file = "#{language}/screenshots.html"
       output_links << "<li><a href='#{output_file}'>#{language}</a></li>\n"
       Helper.log.debug "Creating snapshots for #{language} in #{language_dir}/screenshots.html"
-    end 
+    end
     Helper.log.debug "all screenshots: #{output_links}"
     # create (from a template) a new HTML file in options[:output_directory] || "./fastlane/screenshots" to index all language files
     index_html = ""
